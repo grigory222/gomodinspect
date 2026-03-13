@@ -7,4 +7,4 @@ packages:
       RepoFetcher:
       VersionChecker:
       AnalysisCache:
-      ModuleInspector:
+      Inspector:

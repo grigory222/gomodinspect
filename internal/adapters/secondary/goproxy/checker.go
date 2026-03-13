@@ -1,4 +1,3 @@
-// Package goproxy — вторичный адаптер (secondary) для проверки версий через Go module proxy.
 package goproxy
 
 import (
@@ -12,27 +11,17 @@ import (
 
 const defaultProxyURL = "https://proxy.golang.org"
 
-// VersionChecker реализует порт ports.VersionChecker через Go module proxy.
+// VersionChecker отвечает за получение последней версии модуля
 type VersionChecker struct {
 	proxyURL   string
 	httpClient *http.Client
 	logger     *slog.Logger
 }
 
-// NewVersionChecker создаёт новый VersionChecker с прокси по умолчанию.
 func NewVersionChecker(logger *slog.Logger) *VersionChecker {
 	return &VersionChecker{
 		proxyURL:   defaultProxyURL,
 		httpClient: http.DefaultClient,
-		logger:     logger,
-	}
-}
-
-// NewVersionCheckerWithURL создаёт VersionChecker с указанным URL прокси (для тестирования).
-func NewVersionCheckerWithURL(proxyURL string, httpClient *http.Client, logger *slog.Logger) *VersionChecker {
-	return &VersionChecker{
-		proxyURL:   proxyURL,
-		httpClient: httpClient,
 		logger:     logger,
 	}
 }
@@ -42,7 +31,6 @@ type latestInfo struct {
 	Version string `json:"Version"`
 }
 
-// GetLatestVersion запрашивает последнюю версию модуля у Go module proxy.
 func (v *VersionChecker) GetLatestVersion(ctx context.Context, modulePath string) (string, error) {
 	url := fmt.Sprintf("%s/%s/@latest", v.proxyURL, modulePath)
 
@@ -57,7 +45,11 @@ func (v *VersionChecker) GetLatestVersion(ctx context.Context, modulePath string
 	if err != nil {
 		return "", fmt.Errorf("запрос к прокси: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			v.logger.Warn("не удалось закрыть тело ответа", slog.String("error", err.Error()))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

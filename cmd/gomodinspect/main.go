@@ -1,13 +1,12 @@
-// Точка входа CLI-приложения gomodinspect.
-// Анализирует Go-модуль указанного GitHub-репозитория и показывает устаревшие зависимости.
 package main
 
 import (
 	"context"
-	"fmt"
+	"flag"
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	gh "github.com/google/go-github/v69/github"
@@ -20,46 +19,31 @@ import (
 	"github.com/grigory/gomodinspect/internal/config"
 	"github.com/grigory/gomodinspect/internal/core/services"
 	"github.com/grigory/gomodinspect/internal/logger"
+	"github.com/grigory/gomodinspect/internal/ports"
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "Использование: gomodinspect <github-repo-url>\n")
-		fmt.Fprintf(os.Stderr, "Пример: gomodinspect https://github.com/gin-gonic/gin\n")
+	interactive := flag.Bool("interactive", false, "интерактивный режим")
+	fastMode := flag.Bool("fast-mode", false, "использовать кеш (быстрый режим)")
+	flag.Parse()
+
+	if !*interactive && flag.NArg() == 0 {
+		flag.Usage()
 		os.Exit(1)
 	}
 
-	repoURL := os.Args[1]
-
 	_ = godotenv.Load()
 
-	// Определяем путь к конфигурации
 	cfgPath := os.Getenv("CONFIG_PATH")
 	if cfgPath == "" {
 		cfgPath = "config.yaml"
 	}
 
 	cfg := config.MustLoad(cfgPath)
-
-	// Логгер
 	log := logger.New(cfg.Log.Level)
 
-	// Graceful shutdown: контекст с отменой по сигналу ОС
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
+	ctx, cancel := context.WithCancel(context.Background())
 
-	// Подключение к Redis
-	rdb, err := redisAdapter.Connect(ctx, cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, log)
-	if err != nil {
-		log.Error("не удалось подключиться к Redis", slog.String("error", err.Error()))
-		os.Exit(1)
-	}
-	defer func() {
-		log.Info("закрываем соединение с Redis")
-		_ = rdb.Close()
-	}()
-
-	// GitHub-клиент
 	var ghClient *gh.Client
 	if cfg.GitHub.Token != "" {
 		ghClient = gh.NewClient(nil).WithAuthToken(cfg.GitHub.Token)
@@ -67,19 +51,56 @@ func main() {
 		ghClient = gh.NewClient(nil)
 	}
 
-	// Подключаем адаптеры (secondary)
 	repoFetcher := ghAdapter.NewRepoFetcher(ghClient, log)
 	versionChecker := goproxy.NewVersionChecker(log)
-	cache := redisAdapter.NewCache(rdb, log)
 
-	// Сервис приложения (core)
-	inspector := services.NewInspector(repoFetcher, versionChecker, cache, log)
+	var cache ports.AnalysisCache
+	if *fastMode {
+		rdb, err := redisAdapter.Connect(ctx, cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, log)
+		if err != nil {
+			log.Error("не удалось подключиться к Redis", slog.String("error", err.Error()))
+			os.Exit(1)
+		}
+		defer func() { _ = rdb.Close() }()
+		cache = redisAdapter.NewCache(rdb, cfg.Redis.TTL, log)
+	}
 
-	// CLI-адаптер (primary)
+	inspector := services.NewInspector(repoFetcher, versionChecker, cache, cfg.Inspector.Workers, log)
 	runner := cli.NewRunner(inspector, log)
 
-	if err := runner.Run(ctx, repoURL); err != nil {
-		log.Error("анализ завершился с ошибкой", slog.String("error", err.Error()))
-		os.Exit(1)
+	var wg sync.WaitGroup
+
+	if *interactive && *fastMode {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			services.NewRefresher(inspector, cache, cfg.Redis.RefreshInterval, log).Start(ctx)
+		}()
 	}
+
+	if *interactive {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runner.RunInteractive(ctx)
+			cancel()
+		}()
+	} else {
+		if err := runner.Run(ctx, flag.Arg(0)); err != nil {
+			log.Error("анализ завершился с ошибкой", slog.String("error", err.Error()))
+		}
+		return
+	}
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+
+	select {
+	case sig := <-quit:
+		log.Info("получен сигнал завершения", slog.String("signal", sig.String()))
+	case <-ctx.Done():
+	}
+
+	cancel()
+	wg.Wait()
 }

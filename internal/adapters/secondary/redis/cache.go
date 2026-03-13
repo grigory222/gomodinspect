@@ -1,9 +1,9 @@
-// Package redis — вторичный адаптер для кеширования результатов анализа в Redis.
 package redis
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -13,23 +13,23 @@ import (
 	"github.com/grigory/gomodinspect/internal/core/domain"
 )
 
-const cacheTTL = 24 * time.Hour
+const cacheKeyPrefix = "gomodinspect:analysis"
 
 type Cache struct {
 	client *redis.Client
+	ttl    time.Duration
 	logger *slog.Logger
 }
 
-func NewCache(client *redis.Client, logger *slog.Logger) *Cache {
-	return &Cache{client: client, logger: logger}
+func NewCache(client *redis.Client, ttl time.Duration, logger *slog.Logger) *Cache {
+	return &Cache{client: client, ttl: ttl, logger: logger}
 }
 
-// cacheKey формирует ключ кеша по URL репозитория.
+// cacheKey формирует ключ кеша по URL репозитория
 func cacheKey(repoURL string) string {
-	return fmt.Sprintf("gomodinspect:analysis:%s", repoURL)
+	return cacheKeyPrefix + ":" + repoURL
 }
 
-// Save сохраняет результат анализа в Redis с TTL.
 func (c *Cache) Save(ctx context.Context, record *domain.AnalysisRecord) error {
 	data, err := json.Marshal(record)
 	if err != nil {
@@ -37,7 +37,7 @@ func (c *Cache) Save(ctx context.Context, record *domain.AnalysisRecord) error {
 	}
 
 	key := cacheKey(record.RepoURL)
-	if err := c.client.Set(ctx, key, data, cacheTTL).Err(); err != nil {
+	if err := c.client.Set(ctx, key, data, c.ttl).Err(); err != nil {
 		return fmt.Errorf("запись в Redis: %w", err)
 	}
 
@@ -45,12 +45,11 @@ func (c *Cache) Save(ctx context.Context, record *domain.AnalysisRecord) error {
 	return nil
 }
 
-// Get возвращает закешированный результат анализа или nil, если кеш пуст.
 func (c *Cache) Get(ctx context.Context, repoURL string) (*domain.AnalysisRecord, error) {
 	key := cacheKey(repoURL)
 
 	data, err := c.client.Get(ctx, key).Bytes()
-	if err == redis.Nil {
+	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	}
 	if err != nil {
@@ -66,7 +65,27 @@ func (c *Cache) Get(ctx context.Context, repoURL string) (*domain.AnalysisRecord
 	return &record, nil
 }
 
-// Connect создаёт и проверяет подключение к Redis.
+func (c *Cache) Delete(ctx context.Context, repoURL string) error {
+	if err := c.client.Del(ctx, cacheKey(repoURL)).Err(); err != nil {
+		return fmt.Errorf("удаление из Redis: %w", err)
+	}
+	return nil
+}
+
+func (c *Cache) AllRepoURLs(ctx context.Context) ([]string, error) {
+	pattern := cacheKeyPrefix + ":*"
+	var urls []string
+	iter := c.client.Scan(ctx, 0, pattern, 0).Iterator()
+	for iter.Next(ctx) {
+		key := iter.Val()
+		urls = append(urls, key[len(cacheKeyPrefix)+1:])
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("scan Redis: %w", err)
+	}
+	return urls, nil
+}
+
 func Connect(ctx context.Context, addr, password string, db int, logger *slog.Logger) (*redis.Client, error) {
 	logger.Info("подключаемся к Redis", slog.String("addr", addr))
 

@@ -1,4 +1,3 @@
-// Package github — вторичный адаптер (secondary) для получения go.mod через GitHub API.
 package github
 
 import (
@@ -10,19 +9,17 @@ import (
 	gh "github.com/google/go-github/v69/github"
 )
 
-// RepoFetcher реализует порт ports.RepoFetcher с использованием GitHub API.
+// RepoFetcher отвечает за получение go.mod из репозитория на GitHub
 type RepoFetcher struct {
 	client *gh.Client
 	logger *slog.Logger
 }
 
-// NewRepoFetcher создаёт новый экземпляр RepoFetcher.
-// client может быть аутентифицированным или нет.
 func NewRepoFetcher(client *gh.Client, logger *slog.Logger) *RepoFetcher {
 	return &RepoFetcher{client: client, logger: logger}
 }
 
-// parseOwnerRepo извлекает owner и repo из URL репозитория GitHub.
+// parseOwnerRepo извлекает owner и repo из URL репозитория GitHub
 // Поддерживаемые форматы:
 //   - https://github.com/owner/repo
 //   - github.com/owner/repo
@@ -31,12 +28,10 @@ func parseOwnerRepo(repoURL string) (owner, repo string, err error) {
 	repoURL = strings.TrimSuffix(repoURL, ".git")
 	repoURL = strings.TrimSuffix(repoURL, "/")
 
-	// Убираем схему
 	for _, prefix := range []string{"https://", "http://", "ssh://", "git@"} {
 		repoURL = strings.TrimPrefix(repoURL, prefix)
 	}
 
-	// Убираем префикс github.com
 	repoURL = strings.TrimPrefix(repoURL, "github.com/")
 	repoURL = strings.TrimPrefix(repoURL, "github.com:")
 
@@ -48,7 +43,7 @@ func parseOwnerRepo(repoURL string) (owner, repo string, err error) {
 	return parts[0], parts[1], nil
 }
 
-// FetchGoMod получает содержимое go.mod из дефолтной ветки репозитория.
+// FetchGoMod получает содержимое go.mod из дефолтной ветки репозитория
 func (f *RepoFetcher) FetchGoMod(ctx context.Context, repoURL string) ([]byte, error) {
 	owner, repo, err := parseOwnerRepo(repoURL)
 	if err != nil {

@@ -5,20 +5,28 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Redis  RedisConfig  `yaml:"redis"`
-	GitHub GitHubConfig `yaml:"github"`
-	Log    LogConfig    `yaml:"log"`
+	Redis     RedisConfig     `yaml:"redis"`
+	GitHub    GitHubConfig    `yaml:"github"`
+	Log       LogConfig       `yaml:"log"`
+	Inspector InspectorConfig `yaml:"inspector"`
+}
+
+type InspectorConfig struct {
+	Workers int `yaml:"workers"`
 }
 
 type RedisConfig struct {
-	Addr     string `yaml:"addr"`
-	Password string `yaml:"password"`
-	DB       int    `yaml:"db"`
+	Addr            string        `yaml:"addr"`
+	Password        string        `yaml:"password"`
+	DB              int           `yaml:"db"`
+	TTL             time.Duration `yaml:"ttl"`
+	RefreshInterval time.Duration `yaml:"refresh_interval"`
 }
 
 type GitHubConfig struct {
@@ -30,7 +38,7 @@ type LogConfig struct {
 }
 
 // envVarPattern -- регулярное выражение для поиска плейсхолдеров ${ENV_VAR}
-var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
+var envVarPattern = regexp.MustCompile(`\$\{([^}]+)}`)
 
 // MustLoad читает YAML-конфиг и подставляет значения переменных окружения
 func MustLoad(path string) *Config {

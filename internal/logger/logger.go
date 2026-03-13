@@ -1,4 +1,3 @@
-// Package logger предоставляет функции создания структурированного логгера (slog).
 package logger
 
 import (
@@ -8,7 +7,7 @@ import (
 	"strings"
 )
 
-// New создаёт новый slog.Logger с указанным уровнем логирования.
+// New создаёт новый slog.Logger с указанным уровнем логирования
 func New(level string) *slog.Logger {
 	var lvl slog.Level
 	switch strings.ToLower(level) {
@@ -29,7 +28,7 @@ func New(level string) *slog.Logger {
 	return slog.New(handler)
 }
 
-// NewDiscard создаёт логгер, который отбрасывает все записи (для тестов).
+// NewDiscard создаёт логгер, который отбрасывает все записи (для юнит-тестов)
 func NewDiscard() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

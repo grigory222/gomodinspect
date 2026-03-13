@@ -2,7 +2,7 @@ package domain
 
 import "time"
 
-// AnalysisRecord представляет модель результата анализа для конкретного репозитория
+// AnalysisRecord -- модель результата анализа для репозитория, чтобы сохранять её в Redis
 type AnalysisRecord struct {
 	RepoURL    string    `json:"repo_url"`
 	ModuleName string    `json:"module_name"`
